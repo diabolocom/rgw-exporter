@@ -5,6 +5,7 @@ fullnameOverride: null
 
 serviceMonitor:
   enabled: false
+  scrapeInterval: 15s
 
 rgwExporter:
   replicas: 1

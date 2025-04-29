@@ -12,6 +12,7 @@ spec:
   - port: http-metrics
     path: /metrics
     honorLabels: true
+    interval: {{ .Values.serviceMonitor.scrapeInterval }}
   jobLabel: "{{ .Release.Name }}"
   selector:
     matchLabels:
