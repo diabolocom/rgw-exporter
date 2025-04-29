@@ -4,7 +4,7 @@ nameOverride: null
 fullnameOverride: null
 
 serviceMonitor:
-  enabled: true
+  enabled: false
 
 rgwExporter:
   replicas: 1
@@ -44,5 +44,7 @@ rgwExporter:
     #  RGW_HOST: https://example.com
     #  ACCESS_KEY: user
     #  SECRET_KEY: password
+  config:
+    rgwHosts: []
 
 extraObjects: []

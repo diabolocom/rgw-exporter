@@ -37,6 +37,12 @@ spec:
         envFrom:
         - secretRef:
             name: {{ .Values.rgwExporter.secret.name }}
+        {{- if gt (len .Values.rgwExporter.config.rgwHosts) 0 }}
+        env:
+          - name: RGW_HOST
+            value: {{ .Values.rgwExporter.config.rgwHosts | join "," | quote }}
+        {{- end }}
         securityContext:
           runAsNonRoot: true
           readOnlyRootFilesystem: false
+          allowPrivilegeEscalation: false
