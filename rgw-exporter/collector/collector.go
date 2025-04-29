@@ -48,7 +48,7 @@ func NewRGWCollector(config *defaults.Config) *rgwCollector {
 		),
 		bucketObjects: prometheus.NewDesc("ceph_rgw_bucket_object_count",
 			"Count of objects stored in a bucket",
-			[]string{"uid", "bucket"}, nil,
+			[]string{"uid", "bucket", "type"}, nil,
 		),
 		numShards: prometheus.NewDesc("ceph_rgw_bucket_shard_count",
 			"The number of RADOS objects(shards) a bucket index is using",
@@ -147,7 +147,17 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 					metric := prometheus.MustNewConstMetric(
 						collector.bucketObjects, prometheus.GaugeValue,
 						float64(*bucketInfo.Usage.RgwMain.NumObjects),
-						bucketInfo.Owner, bucketInfo.Bucket)
+						bucketInfo.Owner, bucketInfo.Bucket, "main")
+					ch <- metric
+					objectFlag = true
+				}
+			}
+			if bucketInfo.Usage.RgwMultimeta.NumObjects != nil {
+				if *bucketInfo.Usage.RgwMultimeta.NumObjects >= collector.config.ThresholdObjects {
+					metric := prometheus.MustNewConstMetric(
+						collector.bucketObjects, prometheus.GaugeValue,
+						float64(*bucketInfo.Usage.RgwMultimeta.NumObjects),
+						bucketInfo.Owner, bucketInfo.Bucket, "multimeta")
 					ch <- metric
 					objectFlag = true
 				}

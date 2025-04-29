@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rgw-exporter
+version: 1.0.0
+description: Deploy rgw-exporter to expose RadosGateWay metrics as a prometheus format
+home: https://github.com/pcuzner/rgw-exporter
+appVersion: 1.0.0

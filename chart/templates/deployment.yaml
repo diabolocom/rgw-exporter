@@ -1,0 +1,48 @@
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "fullname" . }}
+  labels:
+    app: rgw-exporter
+    {{- include "labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "labels" . | nindent 6 }}
+      app: rgw-exporter
+  replicas: {{ .Values.rgwExporter.replicas }}
+  template:
+    metadata:
+      labels:
+        app: rgw-exporter
+        {{- include "labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsUser: 1001
+      affinity:
+        {{- .Values.rgwExporter.affinity | toYaml | nindent 8 }}
+      containers:
+      - name: rgwexporter
+          {{- $name := .Values.rgwExporter.image.name | required "rgwExporter.image.name is required." }}
+        image: {{ $name }}:{{ .Values.rgwExporter.image.tag }}
+        imagePullPolicy: {{ .Values.rgwExporter.image.pullPolicy }}
+        ports:
+          - containerPort: 9198
+            name: http-metrics
+        resources:
+          {{- .Values.rgwExporter.resources | toYaml | nindent 8 }}
+        envFrom:
+        - secretRef:
+            name: {{ .Values.rgwExporter.secret.name }}
+        {{- if gt (len .Values.rgwExporter.config.rgwHosts) 0 }}
+        env:
+          - name: RGW_HOST
+            value: {{ .Values.rgwExporter.config.rgwHosts | join "," | quote }}
+        {{- end }}
+        securityContext:
+          runAsNonRoot: true
+          readOnlyRootFilesystem: false
+          allowPrivilegeEscalation: false
