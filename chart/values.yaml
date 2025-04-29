@@ -1,0 +1,48 @@
+---
+
+nameOverride: null
+fullnameOverride: null
+
+serviceMonitor:
+  enabled: true
+
+rgwExporter:
+  replicas: 1
+  image:
+    name: null
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - rgw-exporter
+        topologyKey: "kubernetes.io/hostname"
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values:
+              - rgw-exporter
+          topologyKey: "topology.kubernetes.io/zone"
+        weight: 10
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "100m"
+    limits:
+      memory: "64Mi"
+  secret:
+    name: rgw-exporter
+    values: null
+    #  RGW_HOST: https://example.com
+    #  ACCESS_KEY: user
+    #  SECRET_KEY: password
+
+extraObjects: []
