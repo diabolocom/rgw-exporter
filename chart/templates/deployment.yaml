@@ -33,7 +33,7 @@ spec:
           - containerPort: 9198
             name: http-metrics
         resources:
-          {{- .Values.rgwExporter.resources | toYaml | nindent 8 }}
+          {{- .Values.rgwExporter.resources | toYaml | nindent 10 }}
         envFrom:
         - secretRef:
             name: {{ .Values.rgwExporter.secret.name }}
