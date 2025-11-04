@@ -18,13 +18,17 @@ import (
 )
 
 type rgwCollector struct {
-	config         defaults.Config
-	rgwUser        *prometheus.Desc
-	bucketSize     *prometheus.Desc
-	bucketObjects  *prometheus.Desc
-	numShards      *prometheus.Desc
-	summaryBuckets *prometheus.Desc
-	summaryUsage   *prometheus.Desc
+	config             defaults.Config
+	rgwUser            *prometheus.Desc
+	bucketSize         *prometheus.Desc
+	bucketObjects      *prometheus.Desc
+	numShards          *prometheus.Desc
+	summaryBuckets     *prometheus.Desc
+	summaryUsage       *prometheus.Desc
+	bucketSizeQuota    *prometheus.Desc
+	bucketObjectsQuota *prometheus.Desc
+	userSizeQuota      *prometheus.Desc
+	userObjectsQuota   *prometheus.Desc
 }
 
 // UserStats holds the summary data for a given users S3 usage
@@ -62,6 +66,22 @@ func NewRGWCollector(config *defaults.Config) *rgwCollector {
 			"Total of stored data for a given user",
 			[]string{"uid"}, nil,
 		),
+		bucketSizeQuota: prometheus.NewDesc("ceph_rgw_bucket_bytes_quota",
+			"Quota defined for a bucket in bytes",
+			[]string{"uid", "bucket"}, nil,
+		),
+		bucketObjectsQuota: prometheus.NewDesc("ceph_rgw_bucket_object_quota",
+			"Quota defined for a bucket in a number of objects",
+			[]string{"uid", "bucket"}, nil,
+		),
+		userSizeQuota: prometheus.NewDesc("ceph_rgw_user_bytes_quota",
+			"Quota defined for a user in bytes",
+			[]string{"uid"}, nil,
+		),
+		userObjectsQuota: prometheus.NewDesc("ceph_rgw_user_objects_quota",
+			"Quota defined for a user in a number of objects",
+			[]string{"uid"}, nil,
+		),
 	}
 }
 
@@ -73,6 +93,10 @@ func (collector *rgwCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.numShards
 	ch <- collector.summaryBuckets
 	ch <- collector.summaryUsage
+	ch <- collector.bucketSizeQuota
+	ch <- collector.bucketObjectsQuota
+	ch <- collector.userSizeQuota
+	ch <- collector.userObjectsQuota
 }
 
 // Collect handles the data gathering from RGW and pushes the metrics
@@ -87,7 +111,8 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 	users := collectUsers(connection)
 	var wg sync.WaitGroup
 	queue := make(chan []rgw.Bucket, len(users))
-	wg.Add(len(users))
+	userQuotas := make(chan rgw.QuotaSpec, len(users))
+	wg.Add(len(users) * 2)
 
 	userSummary := make(map[string]UserStats, len(users))
 
@@ -105,6 +130,7 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		log.Debug("bucket list for uid ", uid, " using ", conn.Endpoint)
 		go collectBucketStats(conn, uid, &wg, queue)
+		go collectUserQuota(conn, uid, &wg, userQuotas)
 		hostIdx++
 		if hostIdx > len(collector.config.Endpoints)-1 {
 			hostIdx = 0
@@ -117,6 +143,30 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 	log.Debugf("go routines completed in : %s", elapsed)
 
 	close(queue)
+	close(userQuotas)
+
+	log.Info("Processing the users quota data")
+	for userQuota := range userQuotas {
+		if userQuota.Enabled == nil || !*userQuota.Enabled {
+			log.Debugf("No quota for uid %s", userQuota.UID)
+			continue
+		}
+		log.Debugf("Quota found and enabled for uid %s", userQuota.UID)
+		if userQuota.MaxSize != nil {
+			metric := prometheus.MustNewConstMetric(
+				collector.userSizeQuota, prometheus.GaugeValue,
+				float64(*userQuota.MaxSize),
+				userQuota.UID)
+			ch <- metric
+		}
+		if userQuota.MaxObjects != nil {
+			metric := prometheus.MustNewConstMetric(
+				collector.userObjectsQuota, prometheus.GaugeValue,
+				float64(*userQuota.MaxObjects),
+				userQuota.UID)
+			ch <- metric
+		}
+	}
 
 	log.Info("Processing the bucket stats data")
 	for bucketData := range queue {
@@ -160,6 +210,24 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 						bucketInfo.Owner, bucketInfo.Bucket, "multimeta")
 					ch <- metric
 					objectFlag = true
+				}
+			}
+
+			bucketQuota := bucketInfo.BucketQuota
+			if bucketQuota.Enabled != nil && *bucketQuota.Enabled {
+				if bucketQuota.MaxSize != nil {
+					metric := prometheus.MustNewConstMetric(
+						collector.bucketSizeQuota, prometheus.GaugeValue,
+						float64(*bucketQuota.MaxSize),
+						bucketInfo.Owner, bucketInfo.Bucket)
+					ch <- metric
+				}
+				if bucketQuota.MaxObjects != nil {
+					metric := prometheus.MustNewConstMetric(
+						collector.bucketObjectsQuota, prometheus.GaugeValue,
+						float64(*bucketQuota.MaxObjects),
+						bucketInfo.Owner, bucketInfo.Bucket)
+					ch <- metric
 				}
 			}
 
@@ -245,5 +313,17 @@ func collectBucketStats(connection *rgw.API, uid string, wg *sync.WaitGroup, ch 
 	}
 	log.Debugf("bucket stats for user '%s' complete", uid)
 	ch <- userBuckets
+	defer wg.Done()
+}
+
+func collectUserQuota(connection *rgw.API, uid string, wg *sync.WaitGroup, ch chan<- rgw.QuotaSpec) {
+	log.Debugf("user quota for user '%s' starting", uid)
+	userQuota, err := connection.GetUserQuota(context.Background(), rgw.QuotaSpec{UID: uid})
+	if err != nil {
+		log.Warning("Warning: Unable to get quota for uid ", uid, " : ", err)
+	}
+	userQuota.UID = uid
+	log.Debugf("user quota for user '%s' complete", uid)
+	ch <- userQuota
 	defer wg.Done()
 }

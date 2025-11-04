@@ -5,7 +5,7 @@ fullnameOverride: null
 
 serviceMonitor:
   enabled: false
-  scrapeInterval: 15s
+  scrapeInterval: 60s
 
 rgwExporter:
   replicas: 1
@@ -35,10 +35,10 @@ rgwExporter:
         weight: 10
   resources:
     requests:
-      memory: "64Mi"
-      cpu: "100m"
+      memory: "128Mi"
+      cpu: "300m"
     limits:
-      memory: "64Mi"
+      memory: "128Mi"
   secret:
     name: rgw-exporter
     values: null
