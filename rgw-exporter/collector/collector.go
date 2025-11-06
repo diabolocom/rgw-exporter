@@ -152,14 +152,14 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 			continue
 		}
 		log.Debugf("Quota found and enabled for uid %s", userQuota.UID)
-		if userQuota.MaxSize != nil {
+		if userQuota.MaxSize != nil && *userQuota.MaxSize != -1 {
 			metric := prometheus.MustNewConstMetric(
 				collector.userSizeQuota, prometheus.GaugeValue,
 				float64(*userQuota.MaxSize),
 				userQuota.UID)
 			ch <- metric
 		}
-		if userQuota.MaxObjects != nil {
+		if userQuota.MaxObjects != nil && *userQuota.MaxObjects != -1 {
 			metric := prometheus.MustNewConstMetric(
 				collector.userObjectsQuota, prometheus.GaugeValue,
 				float64(*userQuota.MaxObjects),
@@ -215,14 +215,14 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 
 			bucketQuota := bucketInfo.BucketQuota
 			if bucketQuota.Enabled != nil && *bucketQuota.Enabled {
-				if bucketQuota.MaxSize != nil {
+				if bucketQuota.MaxSize != nil && *bucketQuota.MaxSize != -1 {
 					metric := prometheus.MustNewConstMetric(
 						collector.bucketSizeQuota, prometheus.GaugeValue,
 						float64(*bucketQuota.MaxSize),
 						bucketInfo.Owner, bucketInfo.Bucket)
 					ch <- metric
 				}
-				if bucketQuota.MaxObjects != nil {
+				if bucketQuota.MaxObjects != nil && *bucketQuota.MaxObjects != -1 {
 					metric := prometheus.MustNewConstMetric(
 						collector.bucketObjectsQuota, prometheus.GaugeValue,
 						float64(*bucketQuota.MaxObjects),
