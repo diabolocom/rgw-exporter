@@ -3,7 +3,7 @@ package utils
 import (
 	"errors"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 
 	// "log"
 	"net/url"

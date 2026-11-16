@@ -1,12 +1,12 @@
-FROM alpine AS base
+FROM alpine:3.24.4 AS base
 
 RUN apk add bash curl && addgroup -g 1001 -S app && adduser -u 1001 -S app -G app
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.27.4-alpine AS build
 
 WORKDIR /app
 
-COPY go.mod go.sum .
+COPY go.mod go.sum ./
 
 RUN go mod download
 

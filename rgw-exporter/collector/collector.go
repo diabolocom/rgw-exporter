@@ -11,30 +11,39 @@ import (
 
 	"github.com/pcuzner/rgw-exporter/defaults"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 
 	rgw "github.com/ceph/go-ceph/rgw/admin"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type rgwCollector struct {
-	config             defaults.Config
-	rgwUser            *prometheus.Desc
-	bucketSize         *prometheus.Desc
-	bucketObjects      *prometheus.Desc
-	numShards          *prometheus.Desc
-	summaryBuckets     *prometheus.Desc
-	summaryUsage       *prometheus.Desc
-	bucketSizeQuota    *prometheus.Desc
-	bucketObjectsQuota *prometheus.Desc
-	userSizeQuota      *prometheus.Desc
-	userObjectsQuota   *prometheus.Desc
+	config               defaults.Config
+	rgwUser              *prometheus.Desc
+	bucketSize           *prometheus.Desc
+	bucketSizeActual     *prometheus.Desc
+	bucketSizeKB         *prometheus.Desc
+	bucketSizeKBActual   *prometheus.Desc
+	bucketObjects        *prometheus.Desc
+	numShards            *prometheus.Desc
+	summaryBuckets       *prometheus.Desc
+	summaryUsage         *prometheus.Desc
+	summaryUsageActual   *prometheus.Desc
+	summaryUsageKB       *prometheus.Desc
+	summaryUsageKBActual *prometheus.Desc
+	bucketSizeQuota      *prometheus.Desc
+	bucketObjectsQuota   *prometheus.Desc
+	userSizeQuota        *prometheus.Desc
+	userObjectsQuota     *prometheus.Desc
 }
 
 // UserStats holds the summary data for a given users S3 usage
 type UserStats struct {
-	bucketCount float64
-	totalBytes  float64
+	bucketCount      float64
+	totalBytes       float64
+	totalActualBytes float64
+	totalKB          float64
+	totalKBActual    float64
 }
 
 // NewRGWCollector creates a new collector containing the the runtime
@@ -47,7 +56,19 @@ func NewRGWCollector(config *defaults.Config) *rgwCollector {
 			[]string{"uid"}, nil,
 		),
 		bucketSize: prometheus.NewDesc("ceph_rgw_bucket_usage_bytes",
-			"Total data stored in a bucket",
+			"Logical size of objects in a bucket in bytes (RGW size)",
+			[]string{"uid", "bucket"}, nil,
+		),
+		bucketSizeActual: prometheus.NewDesc("ceph_rgw_bucket_usage_actual_bytes",
+			"Size of objects in a bucket rounded per object to 4 KiB in bytes (RGW size_actual)",
+			[]string{"uid", "bucket"}, nil,
+		),
+		bucketSizeKB: prometheus.NewDesc("ceph_rgw_bucket_usage_kibibytes",
+			"Logical size of objects in a bucket in KiB as reported by RGW (size_kb)",
+			[]string{"uid", "bucket"}, nil,
+		),
+		bucketSizeKBActual: prometheus.NewDesc("ceph_rgw_bucket_usage_actual_kibibytes",
+			"Size of objects in a bucket rounded per object to 4 KiB in KiB as reported by RGW (size_kb_actual)",
 			[]string{"uid", "bucket"}, nil,
 		),
 		bucketObjects: prometheus.NewDesc("ceph_rgw_bucket_object_count",
@@ -63,7 +84,19 @@ func NewRGWCollector(config *defaults.Config) *rgwCollector {
 			[]string{"uid"}, nil,
 		),
 		summaryUsage: prometheus.NewDesc("ceph_rgw_user_total_usage_bytes",
-			"Total of stored data for a given user",
+			"Total logical size of objects owned by a user in bytes (RGW size)",
+			[]string{"uid"}, nil,
+		),
+		summaryUsageActual: prometheus.NewDesc("ceph_rgw_user_total_usage_actual_bytes",
+			"Total size of objects owned by a user rounded per object to 4 KiB in bytes (RGW size_actual)",
+			[]string{"uid"}, nil,
+		),
+		summaryUsageKB: prometheus.NewDesc("ceph_rgw_user_total_usage_kibibytes",
+			"Sum of bucket logical sizes owned by a user in KiB as reported by RGW (size_kb)",
+			[]string{"uid"}, nil,
+		),
+		summaryUsageKBActual: prometheus.NewDesc("ceph_rgw_user_total_usage_actual_kibibytes",
+			"Sum of bucket sizes owned by a user rounded per object to 4 KiB in KiB as reported by RGW (size_kb_actual)",
 			[]string{"uid"}, nil,
 		),
 		bucketSizeQuota: prometheus.NewDesc("ceph_rgw_bucket_bytes_quota",
@@ -89,10 +122,16 @@ func NewRGWCollector(config *defaults.Config) *rgwCollector {
 func (collector *rgwCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.rgwUser
 	ch <- collector.bucketSize
+	ch <- collector.bucketSizeActual
+	ch <- collector.bucketSizeKB
+	ch <- collector.bucketSizeKBActual
 	ch <- collector.bucketObjects
 	ch <- collector.numShards
 	ch <- collector.summaryBuckets
 	ch <- collector.summaryUsage
+	ch <- collector.summaryUsageActual
+	ch <- collector.summaryUsageKB
+	ch <- collector.summaryUsageKBActual
 	ch <- collector.bucketSizeQuota
 	ch <- collector.bucketObjectsQuota
 	ch <- collector.userSizeQuota
@@ -117,7 +156,7 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 	userSummary := make(map[string]UserStats, len(users))
 
 	for _, uid := range users {
-		userSummary[uid] = UserStats{0, 0}
+		userSummary[uid] = UserStats{}
 		metric := prometheus.MustNewConstMetric(collector.rgwUser, prometheus.GaugeValue, 1, uid)
 		ch <- metric
 	}
@@ -179,18 +218,35 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 			log.Debug("Processing buckets for user: ", bucketInfo.Owner)
 			var entry UserStats = userSummary[bucketInfo.Owner]
 
-			if bucketInfo.Usage.RgwMain.Size != nil {
-				if *bucketInfo.Usage.RgwMain.Size >= collector.config.ThresholdSize {
-					metric := prometheus.MustNewConstMetric(
-						collector.bucketSize, prometheus.GaugeValue,
-						float64(*bucketInfo.Usage.RgwMain.Size),
-						bucketInfo.Owner, bucketInfo.Bucket)
-					ch <- metric
+			usage := bucketInfo.Usage.RgwMain
+			reportSize := usage.Size != nil && *usage.Size >= collector.config.ThresholdSize
+			if usage.Size == nil && usage.SizeKb != nil {
+				// Compare KiB to a byte threshold without overflowing the RGW counter.
+				thresholdKB := collector.config.ThresholdSize / 1024
+				if collector.config.ThresholdSize%1024 != 0 {
+					thresholdKB++
+				}
+				reportSize = *usage.SizeKb >= thresholdKB
+			}
+			for _, size := range []struct {
+				value *uint64
+				desc  *prometheus.Desc
+				total *float64
+			}{
+				{usage.Size, collector.bucketSize, &entry.totalBytes},
+				{usage.SizeActual, collector.bucketSizeActual, &entry.totalActualBytes},
+				{usage.SizeKb, collector.bucketSizeKB, &entry.totalKB},
+				{usage.SizeKbActual, collector.bucketSizeKBActual, &entry.totalKBActual},
+			} {
+				if size.value == nil {
+					continue
+				}
+				*size.total += float64(*size.value)
+				if reportSize {
+					ch <- prometheus.MustNewConstMetric(size.desc, prometheus.GaugeValue,
+						float64(*size.value), bucketInfo.Owner, bucketInfo.Bucket)
 					sizeFlag = true
 				}
-
-				entry.totalBytes += float64(*bucketInfo.Usage.RgwMain.Size)
-
 			}
 			if bucketInfo.Usage.RgwMain.NumObjects != nil {
 				if *bucketInfo.Usage.RgwMain.NumObjects >= collector.config.ThresholdObjects {
@@ -231,7 +287,7 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 				}
 			}
 
-			if sizeFlag || objectFlag {
+			if (sizeFlag || objectFlag) && bucketInfo.NumShards != nil {
 				metric := prometheus.MustNewConstMetric(
 					collector.numShards,
 					prometheus.GaugeValue,
@@ -252,11 +308,17 @@ func (collector *rgwCollector) Collect(ch chan<- prometheus.Metric) {
 			uid)
 		ch <- totalBuckets
 
-		totalUsage := prometheus.MustNewConstMetric(
-			collector.summaryUsage, prometheus.GaugeValue,
-			summaryStats.totalBytes,
-			uid)
-		ch <- totalUsage
+		for _, usage := range []struct {
+			desc  *prometheus.Desc
+			value float64
+		}{
+			{collector.summaryUsage, summaryStats.totalBytes},
+			{collector.summaryUsageActual, summaryStats.totalActualBytes},
+			{collector.summaryUsageKB, summaryStats.totalKB},
+			{collector.summaryUsageKBActual, summaryStats.totalKBActual},
+		} {
+			ch <- prometheus.MustNewConstMetric(usage.desc, prometheus.GaugeValue, usage.value, uid)
+		}
 	}
 	log.Info("Processing complete")
 }
