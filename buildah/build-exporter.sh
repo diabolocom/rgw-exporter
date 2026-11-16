@@ -15,16 +15,14 @@ read -p "The build will attempt to push to ${BUILD_REPO}, so press ENTER when yo
 echo "Build image with the tag: $IMAGE_TAG"
 
 # podman pull the image first, push to your local registry to speed up local builds
-#IMAGE="docker.io/golang:1.19"
-IMAGE="docker.io/golang:1.19"
+IMAGE="docker.io/golang:1.27.4"
 build=$(buildah from $IMAGE)
 buildah add $build ../rgw-exporter /rgw-exporter
 buildah config --workingdir /rgw-exporter $build
 buildah run -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=0 -- $build go build .
 
 # as above, grab the alpine image first and push to a local registry
-#container=$(buildah from "docker.io/alpine:3.17")
-container=$(buildah from "docker.io/alpine:3.17")
+container=$(buildah from "docker.io/alpine:3.24.4")
 buildah config --workingdir / $container
 buildah copy --from $build $container /rgw-exporter/rgw-exporter /rgw-exporter
 buildah config --entrypoint '["/rgw-exporter"]' $container

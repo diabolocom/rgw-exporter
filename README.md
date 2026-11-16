@@ -37,6 +37,8 @@ Normally you'd expect to use an admin account with full privileges when using th
 
 ### From the CLI
 
+Building from source requires Go 1.26 or newer. Container builds use Go 1.27.4.
+
 Once compiled, the exporter supports a number of flags;
 
 ```
@@ -92,6 +94,23 @@ INFO[2023-04-22 16:30:52] Processing complete
 ```
 
 ### Metrics
+
+Bucket and user usage metrics read `usage.rgw.main` from the RGW Admin API:
+
+| RGW field | Bucket metric | User total metric |
+|-----------|---------------|-------------------|
+| `size` | `ceph_rgw_bucket_usage_bytes` | `ceph_rgw_user_total_usage_bytes` |
+| `size_actual` | `ceph_rgw_bucket_usage_actual_bytes` | `ceph_rgw_user_total_usage_actual_bytes` |
+| `size_kb` | `ceph_rgw_bucket_usage_kibibytes` | `ceph_rgw_user_total_usage_kibibytes` |
+| `size_kb_actual` | `ceph_rgw_bucket_usage_actual_kibibytes` | `ceph_rgw_user_total_usage_actual_kibibytes` |
+
+`size` is the logical byte count. `size_actual` sums object sizes rounded up individually to 4 KiB.
+Ceph's `size_kb` fields use KiB (1024 bytes), with rounding already applied by RGW; the exporter preserves these values.
+These differ from `size_utilized`, which reflects compression and encryption. See the [Ceph size definitions](https://docs.redhat.com/en/documentation/red_hat_ceph_storage/7/html-single/object_gateway_guide/object_gateway_guide).
+
+Bucket usage metrics share the logical `-threshold.size` filter, using `size_kb` when `size` is unavailable.
+Missing bucket fields are omitted. User totals sum each reported field across all buckets, regardless of thresholds, including RGW's per-bucket KiB rounding.
+
 ```
 # HELP ceph_rgw_bucket_object_count Count of objects stored in a bucket
 # TYPE ceph_rgw_bucket_object_count gauge
@@ -99,7 +118,7 @@ ceph_rgw_bucket_object_count{bucket="mytest",uid="exporter"} 1
 # HELP ceph_rgw_bucket_shard_count The number of RADOS objects(shards) a bucket index is using
 # TYPE ceph_rgw_bucket_shard_count gauge
 ceph_rgw_bucket_shard_count{bucket="mytest",uid="exporter"} 11
-# HELP ceph_rgw_bucket_usage_bytes Total data stored in a bucket
+# HELP ceph_rgw_bucket_usage_bytes Logical size of objects in a bucket in bytes (RGW size)
 # TYPE ceph_rgw_bucket_usage_bytes gauge
 ceph_rgw_bucket_usage_bytes{bucket="mytest",uid="exporter"} 1.048576e+06
 # HELP ceph_rgw_user RGW user
@@ -112,7 +131,7 @@ ceph_rgw_user{uid="exporter"} 1
 ceph_rgw_user_total_bucket_count{uid="admin"} 0
 ceph_rgw_user_total_bucket_count{uid="dashboard"} 0
 ceph_rgw_user_total_bucket_count{uid="exporter"} 1
-# HELP ceph_rgw_user_total_usage_bytes Total of stored data for a given user
+# HELP ceph_rgw_user_total_usage_bytes Total logical size of objects owned by a user in bytes (RGW size)
 # TYPE ceph_rgw_user_total_usage_bytes gauge
 ceph_rgw_user_total_usage_bytes{uid="admin"} 0
 ceph_rgw_user_total_usage_bytes{uid="dashboard"} 0
